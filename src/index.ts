@@ -7,10 +7,19 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import cron from 'node-cron';
 import { StorageManager } from './storage.js';
+import { MemoryConsolidator } from './consolidation.js';
 
 // Parse storage configuration from environment or use default
 const STORAGE_URL = process.env.STORAGE_URL || 'file://brain-memory.duckdb';
+
+// Consolidation configuration
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const CONSOLIDATION_SCHEDULE = process.env.CONSOLIDATION_SCHEDULE || '0 0 * * *'; // Default: midnight every day
+const ENABLE_CONSOLIDATION = process.env.ENABLE_CONSOLIDATION !== 'false'; // Default: enabled
 
 // Current conversation ID
 let currentConversationId = `conv-${Date.now()}`;
@@ -63,6 +72,30 @@ const TOOLS: Tool[] = [
   {
     name: 'new_conversation',
     description: 'Start a new conversation. This creates a new conversation ID for subsequent messages.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'get_long_term_memory',
+    description: 'Retrieve consolidated long-term memories. These are summaries created by analyzing and consolidating past conversations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'number',
+          description: 'Number of long-term memories to retrieve (default: 10, max: 50)',
+          default: 10,
+          minimum: 1,
+          maximum: 50
+        }
+      }
+    }
+  },
+  {
+    name: 'consolidate_memory',
+    description: 'Manually trigger memory consolidation. This will consolidate today\'s short-term memories into long-term memory and clear the short-term storage.',
     inputSchema: {
       type: 'object',
       properties: {}
@@ -183,6 +216,63 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'get_long_term_memory': {
+        const { limit = 10 } = args as {
+          limit?: number;
+        };
+
+        const count = Math.min(Math.max(limit, 1), 50);
+        const memories = await storage.getLongTermMemories(count);
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                count: memories.length,
+                memories: memories.map(m => ({
+                  summary: m.summary,
+                  topics: m.topics,
+                  keyInsights: m.keyInsights,
+                  consolidatedFrom: m.consolidatedFrom,
+                  timestamp: new Date(m.timestamp).toISOString()
+                }))
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case 'consolidate_memory': {
+        if (!OPENAI_API_KEY) {
+          throw new Error('OpenAI API key not configured. Set OPENAI_API_KEY environment variable.');
+        }
+
+        const consolidator = new MemoryConsolidator(
+          {
+            apiKey: OPENAI_API_KEY,
+            baseURL: OPENAI_BASE_URL,
+            model: OPENAI_MODEL
+          },
+          storage
+        );
+
+        await consolidator.consolidate();
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: 'Memory consolidation completed successfully'
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -214,6 +304,39 @@ async function main() {
   } catch (error) {
     console.error('Failed to initialize storage:', error);
     process.exit(1);
+  }
+
+  // Set up nightly memory consolidation worker
+  if (ENABLE_CONSOLIDATION && OPENAI_API_KEY) {
+    console.error('Setting up memory consolidation worker...');
+    console.error(`Model: ${OPENAI_MODEL}`);
+    console.error(`Schedule: ${CONSOLIDATION_SCHEDULE}`);
+
+    const consolidator = new MemoryConsolidator(
+      {
+        apiKey: OPENAI_API_KEY,
+        baseURL: OPENAI_BASE_URL,
+        model: OPENAI_MODEL
+      },
+      storage
+    );
+
+    // Schedule the consolidation job
+    cron.schedule(CONSOLIDATION_SCHEDULE, async () => {
+      console.error('[Cron] Starting scheduled memory consolidation...');
+      try {
+        await consolidator.consolidate();
+        console.error('[Cron] Memory consolidation completed successfully');
+      } catch (error) {
+        console.error('[Cron] Memory consolidation failed:', error);
+      }
+    });
+
+    console.error('Memory consolidation worker scheduled successfully');
+  } else if (ENABLE_CONSOLIDATION && !OPENAI_API_KEY) {
+    console.error('Warning: Consolidation enabled but OPENAI_API_KEY not set. Consolidation worker disabled.');
+  } else {
+    console.error('Memory consolidation worker is disabled');
   }
 
   const transport = new StdioServerTransport();

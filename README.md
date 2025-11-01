@@ -8,6 +8,8 @@ A Model Context Protocol (MCP) server that provides intelligent conversation mem
 - 💾 **DuckDB Backend**: Efficient data lake storage using DuckDB
 - ☁️ **Multi-Backend Support**: Store data locally or in the cloud (S3, GCS)
 - 🔄 **Conversation Management**: Track and retrieve multiple conversations
+- 🌙 **Automatic Memory Consolidation**: Nightly worker using LLMs to consolidate short-term memories into long-term insights
+- 🤖 **OpenAI-Compatible**: Works with OpenAI API and compatible services (LocalAI, Ollama, etc.)
 - 🚀 **Easy Integration**: Standard MCP protocol for seamless integration
 
 ## Installation
@@ -40,6 +42,25 @@ export STORAGE_URL="gcs://my-bucket/brain-memory"
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/credentials.json"
 ```
 
+### Memory Consolidation (Optional but Recommended)
+
+The server includes an automatic nightly worker that consolidates short-term memories into long-term insights using an LLM:
+
+```bash
+# Required for consolidation
+export OPENAI_API_KEY="your-api-key"
+
+# Optional: Use OpenAI-compatible services
+export OPENAI_BASE_URL="https://api.openai.com/v1"  # Or your compatible API
+export OPENAI_MODEL="gpt-4o-mini"  # Default model
+
+# Optional: Customize consolidation schedule (cron format)
+export CONSOLIDATION_SCHEDULE="0 0 * * *"  # Default: midnight daily
+
+# Optional: Disable consolidation
+export ENABLE_CONSOLIDATION="false"  # Default: true
+```
+
 You can also copy `.env.example` to `.env` and configure your settings there.
 
 ## Usage
@@ -70,7 +91,9 @@ Add this to your Claude Desktop configuration file:
       "command": "node",
       "args": ["/path/to/brain-mcp/dist/index.js"],
       "env": {
-        "STORAGE_URL": "file://brain-memory.duckdb"
+        "STORAGE_URL": "file://brain-memory.duckdb",
+        "OPENAI_API_KEY": "your-api-key-here",
+        "OPENAI_MODEL": "gpt-4o-mini"
       }
     }
   }
@@ -148,7 +171,76 @@ Start a new conversation with a fresh conversation ID.
 }
 ```
 
+### 4. `get_long_term_memory`
+
+Retrieve consolidated long-term memories created by the consolidation worker.
+
+**Parameters:**
+- `limit` (optional): Number of memories to retrieve (default: 10, max: 50)
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "count": 5,
+  "memories": [
+    {
+      "summary": "Discussion about implementing memory systems with DuckDB...",
+      "topics": ["DuckDB", "Memory Systems", "MCP Servers"],
+      "keyInsights": [
+        "DuckDB provides efficient storage for conversation data",
+        "Memory consolidation helps maintain context over time"
+      ],
+      "consolidatedFrom": "Conversations from 2024-01-15",
+      "timestamp": "2024-01-16T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+### 5. `consolidate_memory`
+
+Manually trigger memory consolidation (normally runs automatically at night).
+
+**Parameters:** None
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "message": "Memory consolidation completed successfully"
+}
+```
+
 ## Architecture
+
+### How Memory Consolidation Works
+
+The Brain MCP implements a two-tier memory system inspired by human memory:
+
+1. **Short-Term Memory (Conversations Table)**
+   - Stores recent conversation messages
+   - Fast access for context in ongoing conversations
+   - Automatically cleared after consolidation
+
+2. **Long-Term Memory (Long-Term Memory Table)**
+   - Stores consolidated insights and summaries
+   - Created by analyzing short-term memories with an LLM
+   - Persists important information indefinitely
+
+3. **Nightly Consolidation Process**
+   - Scheduled worker runs at midnight (configurable)
+   - Retrieves all conversations from the current day
+   - Analyzes them using the configured LLM model
+   - Extracts key insights, topics, and creates summaries
+   - Stores the consolidation in long-term memory
+   - Clears short-term memory to free up space
+
+This approach ensures:
+- Recent context is always available
+- Important information is preserved long-term
+- Storage remains efficient
+- Knowledge is organized and searchable
 
 ### Storage Backends
 
@@ -160,8 +252,7 @@ The server uses DuckDB as its storage engine with support for:
 
 ### Data Schema
 
-Conversations are stored in a table with the following schema:
-
+**Short-Term Memory (Conversations):**
 ```sql
 CREATE TABLE conversations (
   id VARCHAR PRIMARY KEY,
@@ -169,6 +260,18 @@ CREATE TABLE conversations (
   role VARCHAR NOT NULL,
   content TEXT NOT NULL,
   conversation_id VARCHAR NOT NULL
+);
+```
+
+**Long-Term Memory:**
+```sql
+CREATE TABLE long_term_memory (
+  id VARCHAR PRIMARY KEY,
+  timestamp BIGINT NOT NULL,
+  summary TEXT NOT NULL,
+  topics TEXT NOT NULL,          -- JSON array
+  key_insights TEXT NOT NULL,    -- JSON array
+  consolidated_from TEXT NOT NULL
 );
 ```
 
@@ -187,10 +290,12 @@ CREATE TABLE conversations (
 brain-mcp/
 ├── src/
 │   ├── index.ts          # Main MCP server implementation
-│   └── storage.ts        # Storage manager with DuckDB integration
+│   ├── storage.ts        # Storage manager with DuckDB integration
+│   └── consolidation.ts  # Memory consolidation worker
 ├── dist/                 # Compiled JavaScript (generated)
 ├── package.json
 ├── tsconfig.json
+├── .env.example
 └── README.md
 ```
 
@@ -208,11 +313,35 @@ The project uses TypeScript with strict type checking enabled.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| **Storage Configuration** | | |
 | `STORAGE_URL` | Storage backend URL | `file://brain-memory.duckdb` |
 | `AWS_ACCESS_KEY_ID` | AWS access key (for S3) | - |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key (for S3) | - |
 | `AWS_REGION` | AWS region (for S3) | `us-east-1` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | GCS credentials path | - |
+| **Consolidation Configuration** | | |
+| `OPENAI_API_KEY` | OpenAI API key (required for consolidation) | - |
+| `OPENAI_BASE_URL` | OpenAI-compatible API endpoint | `https://api.openai.com/v1` |
+| `OPENAI_MODEL` | Model to use for consolidation | `gpt-4o-mini` |
+| `CONSOLIDATION_SCHEDULE` | Cron schedule for consolidation | `0 0 * * *` (midnight) |
+| `ENABLE_CONSOLIDATION` | Enable/disable auto-consolidation | `true` |
+
+## Use Cases
+
+### Basic Usage
+Store and retrieve recent conversations for immediate context.
+
+### Long-Term Knowledge Base
+Automatically build a searchable knowledge base of important insights and information from all your conversations.
+
+### Multi-User Systems
+Use different storage backends for different users or contexts.
+
+### Offline-First with Cloud Sync
+Use local storage for fast access, with periodic sync to cloud storage for backup and sharing.
+
+### Custom Consolidation Schedules
+Run consolidation multiple times per day, weekly, or on-demand based on your needs.
 
 ## License
 
