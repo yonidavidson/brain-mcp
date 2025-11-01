@@ -1,0 +1,230 @@
+import { Database } from 'duckdb';
+import { promisify } from 'util';
+
+export interface StorageConfig {
+  url: string;
+}
+
+export interface ConversationEntry {
+  id: string;
+  timestamp: number;
+  role: string;
+  content: string;
+  conversationId: string;
+}
+
+export class StorageManager {
+  private db: Database | null = null;
+  private config: StorageConfig;
+  private dbRun: ((sql: string, ...params: any[]) => Promise<void>) | null = null;
+  private dbAll: ((sql: string, ...params: any[]) => Promise<any[]>) | null = null;
+
+  constructor(config: StorageConfig) {
+    this.config = config;
+  }
+
+  async initialize(): Promise<void> {
+    const storageUrl = this.config.url;
+    let dbPath: string;
+
+    // Parse the storage URL
+    if (storageUrl.startsWith('file://')) {
+      dbPath = storageUrl.replace('file://', '');
+    } else if (storageUrl.startsWith('s3://')) {
+      // For S3, we'll use DuckDB's httpfs extension
+      dbPath = ':memory:';
+    } else if (storageUrl.startsWith('gcs://')) {
+      // For GCS, we'll use DuckDB's httpfs extension
+      dbPath = ':memory:';
+    } else {
+      // Default to file-based storage
+      dbPath = storageUrl;
+    }
+
+    return new Promise((resolve, reject) => {
+      this.db = new Database(dbPath, (err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        if (!this.db) {
+          reject(new Error('Failed to initialize database'));
+          return;
+        }
+
+        // Create promisified versions of db methods
+        this.dbRun = promisify(this.db.run.bind(this.db));
+        this.dbAll = promisify(this.db.all.bind(this.db));
+
+        // Initialize extensions and schema
+        this.setupDatabase(storageUrl)
+          .then(() => resolve())
+          .catch(reject);
+      });
+    });
+  }
+
+  private async setupDatabase(storageUrl: string): Promise<void> {
+    if (!this.dbRun || !this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    // Install and load necessary extensions for remote storage
+    if (storageUrl.startsWith('s3://') || storageUrl.startsWith('gcs://')) {
+      try {
+        await this.dbRun("INSTALL httpfs;");
+        await this.dbRun("LOAD httpfs;");
+
+        if (storageUrl.startsWith('s3://')) {
+          // Configure S3 credentials from environment if available
+          const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+          const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+          const region = process.env.AWS_REGION || 'us-east-1';
+
+          if (accessKeyId && secretAccessKey) {
+            await this.dbRun(`SET s3_access_key_id='${accessKeyId}';`);
+            await this.dbRun(`SET s3_secret_access_key='${secretAccessKey}';`);
+            await this.dbRun(`SET s3_region='${region}';`);
+          }
+        } else if (storageUrl.startsWith('gcs://')) {
+          // Configure GCS credentials from environment if available
+          const gcsKeyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+          if (gcsKeyPath) {
+            await this.dbRun(`SET gcs_access_key='${gcsKeyPath}';`);
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load httpfs extension:', err);
+      }
+    }
+
+    // Create the conversations table
+    await this.dbRun(`
+      CREATE TABLE IF NOT EXISTS conversations (
+        id VARCHAR PRIMARY KEY,
+        timestamp BIGINT NOT NULL,
+        role VARCHAR NOT NULL,
+        content TEXT NOT NULL,
+        conversation_id VARCHAR NOT NULL
+      );
+    `);
+
+    // Create an index on conversation_id and timestamp for faster queries
+    await this.dbRun(`
+      CREATE INDEX IF NOT EXISTS idx_conversation_timestamp
+      ON conversations(conversation_id, timestamp DESC);
+    `);
+
+    // If using remote storage, sync the initial state
+    if (storageUrl.startsWith('s3://') || storageUrl.startsWith('gcs://')) {
+      try {
+        // Load data from remote storage
+        await this.dbRun(`
+          CREATE OR REPLACE TABLE conversations AS
+          SELECT * FROM read_parquet('${storageUrl}/conversations.parquet');
+        `);
+      } catch (err) {
+        // Table doesn't exist remotely yet, which is fine for new setups
+        console.log('No existing remote data found, starting fresh');
+      }
+    }
+  }
+
+  async storeMessage(
+    conversationId: string,
+    role: string,
+    content: string
+  ): Promise<void> {
+    if (!this.dbRun) {
+      throw new Error('Database not initialized');
+    }
+
+    const id = `${conversationId}-${Date.now()}-${Math.random()}`;
+    const timestamp = Date.now();
+
+    await this.dbRun(
+      `INSERT INTO conversations (id, timestamp, role, content, conversation_id)
+       VALUES (?, ?, ?, ?, ?);`,
+      id,
+      timestamp,
+      role,
+      content,
+      conversationId
+    );
+
+    // Sync to remote storage if configured
+    await this.syncToRemote();
+  }
+
+  async getLastNConversations(n: number = 2): Promise<ConversationEntry[]> {
+    if (!this.dbAll) {
+      throw new Error('Database not initialized');
+    }
+
+    // Get the last N unique conversation IDs
+    const conversationIds = await this.dbAll(`
+      SELECT DISTINCT conversation_id
+      FROM conversations
+      ORDER BY MAX(timestamp) DESC
+      LIMIT ?;
+    `, n);
+
+    if (conversationIds.length === 0) {
+      return [];
+    }
+
+    // Get all messages for these conversations
+    const ids = conversationIds.map((row: any) => row.conversation_id);
+    const placeholders = ids.map(() => '?').join(',');
+
+    const messages = await this.dbAll(`
+      SELECT id, timestamp, role, content, conversation_id
+      FROM conversations
+      WHERE conversation_id IN (${placeholders})
+      ORDER BY timestamp ASC;
+    `, ...ids);
+
+    return messages.map((row: any) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      role: row.role,
+      content: row.content,
+      conversationId: row.conversation_id
+    }));
+  }
+
+  private async syncToRemote(): Promise<void> {
+    if (!this.dbRun) {
+      return;
+    }
+
+    const storageUrl = this.config.url;
+
+    if (storageUrl.startsWith('s3://') || storageUrl.startsWith('gcs://')) {
+      try {
+        // Export to Parquet format for remote storage
+        await this.dbRun(`
+          COPY conversations TO '${storageUrl}/conversations.parquet'
+          (FORMAT PARQUET, OVERWRITE_OR_IGNORE true);
+        `);
+      } catch (err) {
+        console.error('Failed to sync to remote storage:', err);
+      }
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.db) {
+      // Sync one last time before closing
+      await this.syncToRemote();
+
+      return new Promise((resolve, reject) => {
+        this.db!.close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    }
+  }
+}
