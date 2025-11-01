@@ -22,6 +22,14 @@ export interface LongTermMemory {
   consolidatedFrom: string; // Date range or conversation IDs
 }
 
+export interface SearchFilters {
+  query?: string;
+  topics?: string[];
+  startDate?: number;
+  endDate?: number;
+  limit?: number;
+}
+
 export class StorageManager {
   private db: Database | null = null;
   private config: StorageConfig;
@@ -286,6 +294,102 @@ export class StorageManager {
     `, limit);
 
     return memories.map((row: any) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      summary: row.summary,
+      topics: JSON.parse(row.topics),
+      keyInsights: JSON.parse(row.key_insights),
+      consolidatedFrom: row.consolidated_from
+    }));
+  }
+
+  async searchConversations(filters: SearchFilters): Promise<ConversationEntry[]> {
+    if (!this.dbAll) {
+      throw new Error('Database not initialized');
+    }
+
+    let sql = `SELECT id, timestamp, role, content, conversation_id FROM conversations WHERE 1=1`;
+    const params: any[] = [];
+
+    // Text search in content
+    if (filters.query) {
+      sql += ` AND LOWER(content) LIKE LOWER(?)`;
+      params.push(`%${filters.query}%`);
+    }
+
+    // Date range filter
+    if (filters.startDate) {
+      sql += ` AND timestamp >= ?`;
+      params.push(filters.startDate);
+    }
+
+    if (filters.endDate) {
+      sql += ` AND timestamp <= ?`;
+      params.push(filters.endDate);
+    }
+
+    sql += ` ORDER BY timestamp DESC`;
+
+    // Limit results
+    if (filters.limit) {
+      sql += ` LIMIT ?`;
+      params.push(filters.limit);
+    }
+
+    const results = await this.dbAll(sql, ...params);
+
+    return results.map((row: any) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      role: row.role,
+      content: row.content,
+      conversationId: row.conversation_id
+    }));
+  }
+
+  async searchLongTermMemories(filters: SearchFilters): Promise<LongTermMemory[]> {
+    if (!this.dbAll) {
+      throw new Error('Database not initialized');
+    }
+
+    let sql = `SELECT id, timestamp, summary, topics, key_insights, consolidated_from FROM long_term_memory WHERE 1=1`;
+    const params: any[] = [];
+
+    // Text search in summary and key insights
+    if (filters.query) {
+      sql += ` AND (LOWER(summary) LIKE LOWER(?) OR LOWER(key_insights) LIKE LOWER(?))`;
+      params.push(`%${filters.query}%`, `%${filters.query}%`);
+    }
+
+    // Topic filter
+    if (filters.topics && filters.topics.length > 0) {
+      const topicConditions = filters.topics.map(() => `LOWER(topics) LIKE LOWER(?)`).join(' OR ');
+      sql += ` AND (${topicConditions})`;
+      filters.topics.forEach(topic => params.push(`%"${topic}"%`));
+    }
+
+    // Date range filter
+    if (filters.startDate) {
+      sql += ` AND timestamp >= ?`;
+      params.push(filters.startDate);
+    }
+
+    if (filters.endDate) {
+      sql += ` AND timestamp <= ?`;
+      params.push(filters.endDate);
+    }
+
+    sql += ` ORDER BY timestamp DESC`;
+
+    // Limit results
+    if (filters.limit) {
+      sql += ` LIMIT ?`;
+      params.push(filters.limit);
+    }
+
+    const results = await this.dbAll(sql, ...params);
+
+    return results.map((row: any) => ({
       id: row.id,
       timestamp: row.timestamp,
       summary: row.summary,

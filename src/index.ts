@@ -100,6 +100,45 @@ const TOOLS: Tool[] = [
       type: 'object',
       properties: {}
     }
+  },
+  {
+    name: 'search_memory',
+    description: 'Search through both short-term and long-term memories using filters. Search by text query, topics, or date range.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Text to search for in conversation content, summaries, and insights'
+        },
+        topics: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter long-term memories by specific topics'
+        },
+        start_date: {
+          type: 'string',
+          description: 'Start date in ISO format (e.g., 2024-01-01T00:00:00.000Z) or timestamp'
+        },
+        end_date: {
+          type: 'string',
+          description: 'End date in ISO format (e.g., 2024-12-31T23:59:59.999Z) or timestamp'
+        },
+        memory_type: {
+          type: 'string',
+          enum: ['short-term', 'long-term', 'both'],
+          description: 'Type of memory to search (default: both)',
+          default: 'both'
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of results to return per memory type (default: 20)',
+          default: 20,
+          minimum: 1,
+          maximum: 100
+        }
+      }
+    }
   }
 ];
 
@@ -268,6 +307,90 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 success: true,
                 message: 'Memory consolidation completed successfully'
               }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case 'search_memory': {
+        const {
+          query,
+          topics,
+          start_date,
+          end_date,
+          memory_type = 'both',
+          limit = 20
+        } = args as {
+          query?: string;
+          topics?: string[];
+          start_date?: string;
+          end_date?: string;
+          memory_type?: 'short-term' | 'long-term' | 'both';
+          limit?: number;
+        };
+
+        // Parse dates
+        const startDate = start_date ? new Date(start_date).getTime() : undefined;
+        const endDate = end_date ? new Date(end_date).getTime() : undefined;
+
+        const searchFilters = {
+          query,
+          topics,
+          startDate,
+          endDate,
+          limit: Math.min(Math.max(limit, 1), 100)
+        };
+
+        const results: any = {
+          success: true,
+          filters: {
+            query: query || 'none',
+            topics: topics || [],
+            dateRange: start_date && end_date
+              ? `${start_date} to ${end_date}`
+              : start_date
+                ? `from ${start_date}`
+                : end_date
+                  ? `until ${end_date}`
+                  : 'all time',
+            memoryType: memory_type
+          }
+        };
+
+        // Search short-term memories
+        if (memory_type === 'short-term' || memory_type === 'both') {
+          const conversations = await storage.searchConversations(searchFilters);
+          results.shortTermResults = {
+            count: conversations.length,
+            conversations: conversations.map(c => ({
+              conversationId: c.conversationId,
+              role: c.role,
+              content: c.content,
+              timestamp: new Date(c.timestamp).toISOString()
+            }))
+          };
+        }
+
+        // Search long-term memories
+        if (memory_type === 'long-term' || memory_type === 'both') {
+          const memories = await storage.searchLongTermMemories(searchFilters);
+          results.longTermResults = {
+            count: memories.length,
+            memories: memories.map(m => ({
+              summary: m.summary,
+              topics: m.topics,
+              keyInsights: m.keyInsights,
+              consolidatedFrom: m.consolidatedFrom,
+              timestamp: new Date(m.timestamp).toISOString()
+            }))
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(results, null, 2)
             }
           ]
         };

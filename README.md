@@ -8,6 +8,7 @@ A Model Context Protocol (MCP) server that provides intelligent conversation mem
 - 💾 **DuckDB Backend**: Efficient data lake storage using DuckDB
 - ☁️ **Multi-Backend Support**: Store data locally or in the cloud (S3, GCS)
 - 🔄 **Conversation Management**: Track and retrieve multiple conversations
+- 🔍 **Powerful Search**: Search through memories by text, topics, or date range
 - 🌙 **Automatic Memory Consolidation**: Nightly worker using LLMs to consolidate short-term memories into long-term insights
 - 🤖 **OpenAI-Compatible**: Works with OpenAI API and compatible services (LocalAI, Ollama, etc.)
 - 🚀 **Easy Integration**: Standard MCP protocol for seamless integration
@@ -209,6 +210,67 @@ Manually trigger memory consolidation (normally runs automatically at night).
 {
   "success": true,
   "message": "Memory consolidation completed successfully"
+}
+```
+
+### 6. `search_memory`
+
+Search through both short-term and long-term memories using flexible filters.
+
+**Parameters:**
+- `query` (optional): Text to search for in conversation content, summaries, and insights
+- `topics` (optional): Array of topics to filter long-term memories
+- `start_date` (optional): Start date in ISO format (e.g., "2024-01-01T00:00:00.000Z")
+- `end_date` (optional): End date in ISO format (e.g., "2024-12-31T23:59:59.999Z")
+- `memory_type` (optional): Type of memory to search - "short-term", "long-term", or "both" (default: "both")
+- `limit` (optional): Maximum number of results per memory type (default: 20, max: 100)
+
+**Example Request:**
+```json
+{
+  "query": "DuckDB",
+  "topics": ["databases", "storage"],
+  "memory_type": "both",
+  "limit": 10
+}
+```
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "filters": {
+    "query": "DuckDB",
+    "topics": ["databases", "storage"],
+    "dateRange": "all time",
+    "memoryType": "both"
+  },
+  "shortTermResults": {
+    "count": 5,
+    "conversations": [
+      {
+        "conversationId": "conv-1234567890",
+        "role": "user",
+        "content": "Tell me about DuckDB performance...",
+        "timestamp": "2024-01-15T14:30:00.000Z"
+      }
+    ]
+  },
+  "longTermResults": {
+    "count": 3,
+    "memories": [
+      {
+        "summary": "Discussion about DuckDB as a storage solution...",
+        "topics": ["DuckDB", "databases", "storage"],
+        "keyInsights": [
+          "DuckDB provides excellent analytical query performance",
+          "Embedded database with no server required"
+        ],
+        "consolidatedFrom": "Conversations from 2024-01-14",
+        "timestamp": "2024-01-15T00:00:00.000Z"
+      }
+    ]
+  }
 }
 ```
 
