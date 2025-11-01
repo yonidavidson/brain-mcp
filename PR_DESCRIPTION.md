@@ -1,30 +1,38 @@
 # Pull Request: Brain MCP Memory Store Server
 
 ## Title
-Brain MCP: Memory Store Server with Automatic LLM-Powered Consolidation
+Brain MCP: Memory Store with Search & Consolidation
 
 ## Description
 
 ### Summary
 
-This PR implements a complete MCP (Model Context Protocol) server for intelligent conversation memory storage with automatic consolidation using LLMs. The system implements a two-tier memory architecture inspired by human memory: short-term memory for immediate context and long-term memory for important insights.
+This PR implements a complete MCP (Model Context Protocol) server for intelligent conversation memory storage with automatic LLM-powered consolidation and powerful search capabilities.
 
 ### 🎯 Key Features
 
-#### Core Functionality
-- ✅ **MCP Server** with 5 tools for memory management
-- ✅ **DuckDB Storage** for efficient data lake storage
+#### Core Memory System
+- ✅ **MCP Server** with 6 tools for comprehensive memory management
+- ✅ **DuckDB Storage** for efficient data lake operations
 - ✅ **Multi-Backend Support** (local files, S3, GCS)
-- ✅ **Conversation Tracking** with unique IDs and timestamps
+- ✅ **Two-Tier Architecture** (short-term + long-term memory)
 - ✅ **TypeScript** implementation with strict typing
 
-#### 🌙 Automatic Memory Consolidation (NEW)
-- ✅ **Nightly Worker** that consolidates short-term to long-term memory
+#### 🌙 Automatic Memory Consolidation
+- ✅ **Nightly Worker** consolidates short-term to long-term memory
 - ✅ **LLM Integration** using OpenAI-compatible APIs
 - ✅ **Smart Analysis** extracts topics, insights, and summaries
 - ✅ **Context-Aware** considers existing memories to avoid duplication
 - ✅ **Configurable Scheduling** via cron expressions
 - ✅ **Automatic Cleanup** clears short-term memory after consolidation
+
+#### 🔍 Powerful Search (NEW)
+- ✅ **Search Both Memory Types** - Query short-term and long-term memories
+- ✅ **Text Query** - Search across content, summaries, and insights
+- ✅ **Filter by Topics** - Find memories by specific topics
+- ✅ **Filter by Date Range** - Time-based memory retrieval
+- ✅ **Choose Memory Type** - Search short-term, long-term, or both
+- ✅ **Configurable Limits** - Control result count per query
 
 ### 🛠️ MCP Tools
 
@@ -33,6 +41,7 @@ This PR implements a complete MCP (Model Context Protocol) server for intelligen
 3. **new_conversation** - Start a new conversation
 4. **get_long_term_memory** - Retrieve consolidated insights
 5. **consolidate_memory** - Manually trigger consolidation
+6. **search_memory** - Search memories by text, topics, or date range
 
 ### 🏗️ Architecture
 
@@ -56,6 +65,13 @@ This PR implements a complete MCP (Model Context Protocol) server for intelligen
 5. Stores consolidation in long-term memory
 6. Clears short-term memory
 
+#### Search Implementation
+- SQL-based filtering with DuckDB
+- Text search using LIKE queries for fuzzy matching
+- Topic matching in JSON arrays
+- Timestamp-based date filtering
+- Separate results for each memory type with counts
+
 ### ⚙️ Configuration
 
 #### Storage Backend
@@ -70,7 +86,7 @@ STORAGE_URL=gcs://bucket/path             # Google Cloud Storage
 OPENAI_API_KEY=your-api-key               # Required
 OPENAI_MODEL=gpt-4o-mini                  # Default model
 OPENAI_BASE_URL=https://api.openai.com/v1 # OpenAI-compatible APIs
-CONSOLIDATION_SCHEDULE=0 0 * * *          # Cron format
+CONSOLIDATION_SCHEDULE=0 0 * * *          # Cron format (midnight)
 ENABLE_CONSOLIDATION=true                 # Toggle feature
 ```
 
@@ -87,7 +103,7 @@ ENABLE_CONSOLIDATION=true                 # Toggle feature
 brain-mcp/
 ├── src/
 │   ├── index.ts          # Main MCP server
-│   ├── storage.ts        # DuckDB storage manager
+│   ├── storage.ts        # DuckDB storage manager with search
 │   └── consolidation.ts  # Memory consolidation worker
 ├── dist/                 # Compiled output
 ├── package.json
@@ -130,6 +146,9 @@ npm start
 
 - **Context Retention** - Maintain conversation context across sessions
 - **Knowledge Base** - Automatically build searchable knowledge from conversations
+- **Topic Discovery** - Find all conversations about specific topics
+- **Time-based Queries** - Retrieve memories from specific time periods
+- **Smart Insights** - LLM-powered extraction of key information
 - **Multi-Backend** - Use local storage with cloud sync for backup
 - **Custom Schedules** - Run consolidation daily, weekly, or on-demand
 - **OpenAI Alternatives** - Works with LocalAI, Ollama, and other compatible services
@@ -138,23 +157,46 @@ npm start
 
 - `1d8c1fa` - Implement MCP server with DuckDB-based memory store
 - `1296967` - Add automatic memory consolidation with LLM-powered worker
+- `b4b2b14` - Add powerful search functionality to memory system
 
 ### 🔍 Changes Summary
 
 **New Files:**
-- `src/consolidation.ts` (206 lines)
-- `.env.example`
-- `.gitignore`
-- `package.json`
-- `tsconfig.json`
-- `src/index.ts`
-- `src/storage.ts`
+- `src/consolidation.ts` - Memory consolidation worker
+- `src/index.ts` - Main MCP server with all tools
+- `src/storage.ts` - Storage manager with search capabilities
+- `.env.example` - Configuration template
+- `.gitignore` - Git ignore rules
+- `package.json` - Dependencies and scripts
+- `tsconfig.json` - TypeScript configuration
 
 **Modified Files:**
-- `README.md` - Comprehensive documentation with consolidation features
+- `README.md` - Comprehensive documentation with all features
 
-**Total Changes:** ~1,300+ lines added
+**Total Changes:** ~1,600+ lines added across 7 files
+
+### 🧪 Testing the Features
+
+```bash
+# 1. Store some conversations
+# Use store_memory tool
+
+# 2. Search for specific topics
+# Use search_memory with query="topic"
+
+# 3. Manually trigger consolidation
+# Use consolidate_memory tool
+
+# 4. Check long-term memories
+# Use get_long_term_memory tool
+
+# 5. Search by date range
+# Use search_memory with start_date and end_date
+
+# 6. Filter by topics
+# Use search_memory with topics array
+```
 
 ---
 
-This implementation provides a robust, production-ready memory system for MCP servers with intelligent consolidation powered by LLMs.
+This implementation provides a robust, production-ready memory system for MCP servers with intelligent consolidation and powerful search capabilities, all powered by LLMs and DuckDB.
