@@ -13,6 +13,15 @@ export interface ConversationEntry {
   conversationId: string;
 }
 
+export interface LongTermMemory {
+  id: string;
+  timestamp: number;
+  summary: string;
+  topics: string[];
+  keyInsights: string[];
+  consolidatedFrom: string; // Date range or conversation IDs
+}
+
 export class StorageManager {
   private db: Database | null = null;
   private config: StorageConfig;
@@ -116,6 +125,24 @@ export class StorageManager {
       ON conversations(conversation_id, timestamp DESC);
     `);
 
+    // Create the long-term memory table
+    await this.dbRun(`
+      CREATE TABLE IF NOT EXISTS long_term_memory (
+        id VARCHAR PRIMARY KEY,
+        timestamp BIGINT NOT NULL,
+        summary TEXT NOT NULL,
+        topics TEXT NOT NULL,
+        key_insights TEXT NOT NULL,
+        consolidated_from TEXT NOT NULL
+      );
+    `);
+
+    // Create an index on timestamp for long-term memory
+    await this.dbRun(`
+      CREATE INDEX IF NOT EXISTS idx_ltm_timestamp
+      ON long_term_memory(timestamp DESC);
+    `);
+
     // If using remote storage, sync the initial state
     if (storageUrl.startsWith('s3://') || storageUrl.startsWith('gcs://')) {
       try {
@@ -194,6 +221,97 @@ export class StorageManager {
     }));
   }
 
+  async getTodaysConversations(): Promise<ConversationEntry[]> {
+    if (!this.dbAll) {
+      throw new Error('Database not initialized');
+    }
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startTimestamp = startOfDay.getTime();
+
+    const messages = await this.dbAll(`
+      SELECT id, timestamp, role, content, conversation_id
+      FROM conversations
+      WHERE timestamp >= ?
+      ORDER BY timestamp ASC;
+    `, startTimestamp);
+
+    return messages.map((row: any) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      role: row.role,
+      content: row.content,
+      conversationId: row.conversation_id
+    }));
+  }
+
+  async storeLongTermMemory(
+    summary: string,
+    topics: string[],
+    keyInsights: string[],
+    consolidatedFrom: string
+  ): Promise<void> {
+    if (!this.dbRun) {
+      throw new Error('Database not initialized');
+    }
+
+    const id = `ltm-${Date.now()}-${Math.random()}`;
+    const timestamp = Date.now();
+
+    await this.dbRun(
+      `INSERT INTO long_term_memory (id, timestamp, summary, topics, key_insights, consolidated_from)
+       VALUES (?, ?, ?, ?, ?, ?);`,
+      id,
+      timestamp,
+      summary,
+      JSON.stringify(topics),
+      JSON.stringify(keyInsights),
+      consolidatedFrom
+    );
+
+    await this.syncToRemote();
+  }
+
+  async getLongTermMemories(limit: number = 10): Promise<LongTermMemory[]> {
+    if (!this.dbAll) {
+      throw new Error('Database not initialized');
+    }
+
+    const memories = await this.dbAll(`
+      SELECT id, timestamp, summary, topics, key_insights, consolidated_from
+      FROM long_term_memory
+      ORDER BY timestamp DESC
+      LIMIT ?;
+    `, limit);
+
+    return memories.map((row: any) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      summary: row.summary,
+      topics: JSON.parse(row.topics),
+      keyInsights: JSON.parse(row.key_insights),
+      consolidatedFrom: row.consolidated_from
+    }));
+  }
+
+  async clearShortTermMemory(): Promise<number> {
+    if (!this.dbRun || !this.dbAll) {
+      throw new Error('Database not initialized');
+    }
+
+    // Get count before deletion
+    const countResult = await this.dbAll(`SELECT COUNT(*) as count FROM conversations;`);
+    const count = countResult[0]?.count || 0;
+
+    // Delete all conversations
+    await this.dbRun(`DELETE FROM conversations;`);
+
+    await this.syncToRemote();
+
+    return count;
+  }
+
   private async syncToRemote(): Promise<void> {
     if (!this.dbRun) {
       return;
@@ -203,9 +321,15 @@ export class StorageManager {
 
     if (storageUrl.startsWith('s3://') || storageUrl.startsWith('gcs://')) {
       try {
-        // Export to Parquet format for remote storage
+        // Export conversations to Parquet format for remote storage
         await this.dbRun(`
           COPY conversations TO '${storageUrl}/conversations.parquet'
+          (FORMAT PARQUET, OVERWRITE_OR_IGNORE true);
+        `);
+
+        // Export long-term memory to Parquet format
+        await this.dbRun(`
+          COPY long_term_memory TO '${storageUrl}/long_term_memory.parquet'
           (FORMAT PARQUET, OVERWRITE_OR_IGNORE true);
         `);
       } catch (err) {
