@@ -53,7 +53,7 @@ export OPENAI_API_KEY="your-api-key"
 
 # Optional: Use OpenAI-compatible services
 export OPENAI_BASE_URL="https://api.openai.com/v1"  # Or your compatible API
-export OPENAI_MODEL="gpt-4o-mini"  # Default model
+export OPENAI_MODEL="gpt-5-mini"  # Default model
 
 # Optional: Customize consolidation schedule (cron format)
 export CONSOLIDATION_SCHEDULE="0 0 * * *"  # Default: midnight daily
@@ -94,7 +94,7 @@ Add this to your Claude Desktop configuration file:
       "env": {
         "STORAGE_URL": "file://brain-memory.duckdb",
         "OPENAI_API_KEY": "your-api-key-here",
-        "OPENAI_MODEL": "gpt-4o-mini"
+        "OPENAI_MODEL": "gpt-5-mini"
       }
     }
   }
@@ -385,7 +385,7 @@ The project uses TypeScript with strict type checking enabled.
 | **Consolidation Configuration** | | |
 | `OPENAI_API_KEY` | OpenAI API key (required for consolidation) | - |
 | `OPENAI_BASE_URL` | OpenAI-compatible API endpoint | `https://api.openai.com/v1` |
-| `OPENAI_MODEL` | Model to use for consolidation | `gpt-4o-mini` |
+| `OPENAI_MODEL` | Model to use for consolidation | `gpt-5-mini` |
 | `CONSOLIDATION_SCHEDULE` | Cron schedule for consolidation | `0 0 * * *` (midnight) |
 | `ENABLE_CONSOLIDATION` | Enable/disable auto-consolidation | `true` |
 

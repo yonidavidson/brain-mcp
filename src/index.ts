@@ -17,7 +17,7 @@ const STORAGE_URL = process.env.STORAGE_URL || 'file://brain-memory.duckdb';
 // Consolidation configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const CONSOLIDATION_SCHEDULE = process.env.CONSOLIDATION_SCHEDULE || '0 0 * * *'; // Default: midnight every day
 const ENABLE_CONSOLIDATION = process.env.ENABLE_CONSOLIDATION !== 'false'; // Default: enabled
 
