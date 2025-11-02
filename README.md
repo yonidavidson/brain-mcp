@@ -274,6 +274,7 @@ Search through both short-term and long-term memories using flexible filters.
 }
 ```
 
+
 ## Architecture
 
 ### How Memory Consolidation Works
