@@ -329,9 +329,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           limit?: number;
         };
 
-        // Parse dates
-        const startDate = start_date ? new Date(start_date).getTime() : undefined;
-        const endDate = end_date ? new Date(end_date).getTime() : undefined;
+        // Parse and validate dates
+        let startDate: number | undefined = undefined;
+        let endDate: number | undefined = undefined;
+
+        if (start_date) {
+          const parsedStart = new Date(start_date).getTime();
+          if (isNaN(parsedStart)) {
+            throw new Error(`Invalid start_date: ${start_date}. Please use ISO 8601 format (e.g., 2024-01-01T00:00:00.000Z)`);
+          }
+          startDate = parsedStart;
+        }
+
+        if (end_date) {
+          const parsedEnd = new Date(end_date).getTime();
+          if (isNaN(parsedEnd)) {
+            throw new Error(`Invalid end_date: ${end_date}. Please use ISO 8601 format (e.g., 2024-12-31T23:59:59.999Z)`);
+          }
+          endDate = parsedEnd;
+        }
 
         const searchFilters = {
           query,
