@@ -114,14 +114,27 @@ Respond ONLY with valid JSON in this exact format:
     });
 
     const responseText = completion.choices[0].message.content || '{}';
-    const parsed = JSON.parse(responseText);
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(responseText);
+    } catch (error) {
+      console.error('[Consolidation] Failed to parse LLM response as JSON:', error);
+      console.error('[Consolidation] Response was:', responseText);
+      // Return a safe default if parsing fails
+      parsed = {
+        summary: 'Failed to parse consolidation response',
+        topics: [],
+        keyInsights: []
+      };
+    }
 
     const today = new Date().toISOString().split('T')[0];
 
     return {
       summary: parsed.summary || 'No summary generated',
-      topics: parsed.topics || [],
-      keyInsights: parsed.keyInsights || [],
+      topics: Array.isArray(parsed.topics) ? parsed.topics : [],
+      keyInsights: Array.isArray(parsed.keyInsights) ? parsed.keyInsights : [],
       consolidatedFrom: `Conversations from ${today}`
     };
   }
