@@ -55,9 +55,9 @@ export class MemoryConsolidator {
 
       console.error('[Consolidation] Stored consolidated memory.');
 
-      // Clear short-term memory
-      const clearedCount = await this.storage.clearShortTermMemory();
-      console.error(`[Consolidation] Cleared ${clearedCount} short-term memories.`);
+      // Mark short-term memories as consolidated
+      const markedCount = await this.storage.markConversationsAsConsolidated();
+      console.error(`[Consolidation] Marked ${markedCount} conversations as consolidated.`);
 
       console.error('[Consolidation] Memory consolidation completed successfully!');
     } catch (error) {

@@ -123,9 +123,23 @@ export class StorageManager {
         timestamp BIGINT NOT NULL,
         role VARCHAR NOT NULL,
         content TEXT NOT NULL,
-        conversation_id VARCHAR NOT NULL
+        conversation_id VARCHAR NOT NULL,
+        consolidated BOOLEAN DEFAULT FALSE
       );
     `);
+
+    // Add consolidated column if it doesn't exist (migration for existing databases)
+    try {
+      await this.dbRun(`
+        ALTER TABLE conversations ADD COLUMN consolidated BOOLEAN DEFAULT FALSE;
+      `);
+      console.log('Added consolidated column to conversations table');
+    } catch (err: any) {
+      // Column already exists or other error - ignore
+      if (!err.message?.includes('already exists') && !err.message?.includes('Duplicate column name')) {
+        console.log('Consolidated column likely already exists:', err.message);
+      }
+    }
 
     // Create an index on conversation_id and timestamp for faster queries
     await this.dbRun(`
@@ -241,7 +255,7 @@ export class StorageManager {
     const messages = await this.dbAll(`
       SELECT id, timestamp, role, content, conversation_id
       FROM conversations
-      WHERE timestamp >= ?
+      WHERE timestamp >= ? AND consolidated = FALSE
       ORDER BY timestamp ASC;
     `, startTimestamp);
 
@@ -397,6 +411,35 @@ export class StorageManager {
       keyInsights: JSON.parse(row.key_insights),
       consolidatedFrom: row.consolidated_from
     }));
+  }
+
+  async markConversationsAsConsolidated(): Promise<number> {
+    if (!this.dbRun || !this.dbAll) {
+      throw new Error('Database not initialized');
+    }
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startTimestamp = startOfDay.getTime();
+
+    // Get count of unconsolidated conversations from today before marking
+    const countResult = await this.dbAll(`
+      SELECT COUNT(*) as count
+      FROM conversations
+      WHERE timestamp >= ? AND consolidated = FALSE;
+    `, startTimestamp);
+    const count = countResult[0]?.count || 0;
+
+    // Mark today's conversations as consolidated
+    await this.dbRun(`
+      UPDATE conversations
+      SET consolidated = TRUE
+      WHERE timestamp >= ? AND consolidated = FALSE;
+    `, startTimestamp);
+
+    await this.syncToRemote();
+
+    return count;
   }
 
   async clearShortTermMemory(): Promise<number> {
