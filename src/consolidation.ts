@@ -35,8 +35,9 @@ export class MemoryConsolidator {
 
       console.error(`[Consolidation] Found ${todayConversations.length} messages from today.`);
 
-      // Get existing long-term memories for context
-      const existingMemories = await this.storage.getLongTermMemories(20);
+      // Get existing long-term memories for context and semantic deduplication
+      // Check more memories (50) for semantic similarity to avoid duplicates
+      const existingMemories = await this.storage.getLongTermMemories(50);
       console.error(`[Consolidation] Retrieved ${existingMemories.length} existing long-term memories.`);
 
       // Use LLM to consolidate
@@ -45,15 +46,30 @@ export class MemoryConsolidator {
         existingMemories
       );
 
-      // Store the consolidated memory
-      await this.storage.storeLongTermMemory(
-        consolidatedMemory.summary,
-        consolidatedMemory.topics,
-        consolidatedMemory.keyInsights,
-        consolidatedMemory.consolidatedFrom
-      );
+      // Check for semantic duplicates and merge if necessary
+      const similarMemory = await this.findSimilarMemory(consolidatedMemory, existingMemories);
 
-      console.error('[Consolidation] Stored consolidated memory.');
+      if (similarMemory) {
+        console.error(`[Consolidation] Found semantically similar memory (ID: ${similarMemory.id}), merging...`);
+        const mergedMemory = await this.mergeMemories(consolidatedMemory, similarMemory);
+        await this.storage.updateLongTermMemory(
+          similarMemory.id,
+          mergedMemory.summary,
+          mergedMemory.topics,
+          mergedMemory.keyInsights,
+          mergedMemory.consolidatedFrom
+        );
+        console.error('[Consolidation] Updated existing memory with merged content.');
+      } else {
+        // Store the consolidated memory as new
+        await this.storage.storeLongTermMemory(
+          consolidatedMemory.summary,
+          consolidatedMemory.topics,
+          consolidatedMemory.keyInsights,
+          consolidatedMemory.consolidatedFrom
+        );
+        console.error('[Consolidation] Stored new consolidated memory.');
+      }
 
       // Mark short-term memories as consolidated
       const markedCount = await this.storage.markConversationsAsConsolidated();
@@ -205,5 +221,150 @@ Provide your response as JSON with:
 - summary: A comprehensive 2-3 sentence summary
 - topics: Array of 3-5 main topics (as short strings)
 - keyInsights: Array of 3-7 key insights or important facts to remember`;
+  }
+
+  private async findSimilarMemory(
+    newMemory: { summary: string; topics: string[]; keyInsights: string[] },
+    existingMemories: LongTermMemory[]
+  ): Promise<LongTermMemory | null> {
+    if (existingMemories.length === 0) {
+      return null;
+    }
+
+    // Format memories for comparison
+    const newMemoryText = this.formatMemoryForComparison(newMemory);
+    const existingMemoriesText = existingMemories.map((mem, idx) =>
+      `Memory ${idx + 1} (ID: ${mem.id}):\n${this.formatMemoryForComparison(mem)}`
+    ).join('\n\n');
+
+    const prompt = `# Task: Identify Semantically Similar Memories
+
+## New Memory to Store:
+${newMemoryText}
+
+## Existing Long-Term Memories:
+${existingMemoriesText}
+
+## Instructions:
+Analyze if the new memory is semantically similar to any existing memory. Memories are considered similar if they:
+- Discuss the same core topics or concepts
+- Contain overlapping key insights or information
+- Would be better represented as a single merged memory rather than separate entries
+
+Return JSON with:
+- isSimilar: true if a similar memory exists, false otherwise
+- memoryId: the ID of the most similar memory (or null if none are similar)
+- reason: brief explanation of why they are or aren't similar
+
+Only mark as similar if there's substantial semantic overlap (>70% similar in meaning).`;
+
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: this.model,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a semantic similarity analyzer. Your task is to identify if memories have similar semantic meaning.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.2,
+        response_format: { type: 'json_object' }
+      });
+
+      const responseText = completion.choices[0].message.content || '{}';
+      const parsed = JSON.parse(responseText);
+
+      console.error(`[Consolidation] Similarity check: ${parsed.reason}`);
+
+      if (parsed.isSimilar && parsed.memoryId) {
+        return existingMemories.find(mem => mem.id === parsed.memoryId) || null;
+      }
+    } catch (error) {
+      console.error('[Consolidation] Error checking similarity:', error);
+    }
+
+    return null;
+  }
+
+  private async mergeMemories(
+    newMemory: { summary: string; topics: string[]; keyInsights: string[]; consolidatedFrom: string },
+    existingMemory: LongTermMemory
+  ): Promise<{
+    summary: string;
+    topics: string[];
+    keyInsights: string[];
+    consolidatedFrom: string;
+  }> {
+    const newMemoryText = this.formatMemoryForComparison(newMemory);
+    const existingMemoryText = this.formatMemoryForComparison(existingMemory);
+
+    const prompt = `# Task: Merge Semantically Similar Memories
+
+## Existing Memory:
+${existingMemoryText}
+Consolidated From: ${existingMemory.consolidatedFrom}
+
+## New Memory to Merge:
+${newMemoryText}
+Consolidated From: ${newMemory.consolidatedFrom}
+
+## Instructions:
+Merge these two memories into a single, comprehensive memory that:
+1. Combines information from both without duplication
+2. Preserves all unique insights and topics
+3. Creates a coherent summary that encompasses both
+4. Removes redundant information
+
+Return JSON with:
+- summary: A comprehensive merged summary (2-4 sentences)
+- topics: Combined unique topics from both memories
+- keyInsights: Combined unique insights from both memories`;
+
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: this.model,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a memory merger. Your task is to combine similar memories into one comprehensive memory without losing information.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.3,
+        response_format: { type: 'json_object' }
+      });
+
+      const responseText = completion.choices[0].message.content || '{}';
+      const parsed = JSON.parse(responseText);
+
+      return {
+        summary: parsed.summary || newMemory.summary,
+        topics: Array.isArray(parsed.topics) ? parsed.topics : [...new Set([...existingMemory.topics, ...newMemory.topics])],
+        keyInsights: Array.isArray(parsed.keyInsights) ? parsed.keyInsights : [...new Set([...existingMemory.keyInsights, ...newMemory.keyInsights])],
+        consolidatedFrom: `${existingMemory.consolidatedFrom}; ${newMemory.consolidatedFrom}`
+      };
+    } catch (error) {
+      console.error('[Consolidation] Error merging memories:', error);
+      // Fallback to simple merge
+      return {
+        summary: `${existingMemory.summary} ${newMemory.summary}`,
+        topics: [...new Set([...existingMemory.topics, ...newMemory.topics])],
+        keyInsights: [...new Set([...existingMemory.keyInsights, ...newMemory.keyInsights])],
+        consolidatedFrom: `${existingMemory.consolidatedFrom}; ${newMemory.consolidatedFrom}`
+      };
+    }
+  }
+
+  private formatMemoryForComparison(memory: { summary: string; topics: string[]; keyInsights: string[] }): string {
+    return `Summary: ${memory.summary}
+Topics: ${memory.topics.join(', ')}
+Key Insights: ${memory.keyInsights.join('; ')}`;
   }
 }

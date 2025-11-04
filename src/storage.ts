@@ -295,6 +295,34 @@ export class StorageManager {
     await this.syncToRemote();
   }
 
+  async updateLongTermMemory(
+    id: string,
+    summary: string,
+    topics: string[],
+    keyInsights: string[],
+    consolidatedFrom: string
+  ): Promise<void> {
+    if (!this.dbRun) {
+      throw new Error('Database not initialized');
+    }
+
+    const timestamp = Date.now();
+
+    await this.dbRun(
+      `UPDATE long_term_memory
+       SET timestamp = ?, summary = ?, topics = ?, key_insights = ?, consolidated_from = ?
+       WHERE id = ?;`,
+      timestamp,
+      summary,
+      JSON.stringify(topics),
+      JSON.stringify(keyInsights),
+      consolidatedFrom,
+      id
+    );
+
+    await this.syncToRemote();
+  }
+
   async getLongTermMemories(limit: number = 10): Promise<LongTermMemory[]> {
     if (!this.dbAll) {
       throw new Error('Database not initialized');
